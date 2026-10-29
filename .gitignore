@@ -1,0 +1,21 @@
+# Maven 构建产物
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE / 系统
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# 日志与本地环境
+*.log
+logs/
+.env
+.scratch/
+
+# 冒烟脚本产生的缓存
+__pycache__/
+.pytest_cache/

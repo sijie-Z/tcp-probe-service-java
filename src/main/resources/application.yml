@@ -1,0 +1,56 @@
+server:
+  port: ${APP_PORT:8000}
+  shutdown: graceful
+
+spring:
+  application:
+    name: tcp-probe-service
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  mvc:
+    throw-exception-if-no-handler-found: true
+  web:
+    resources:
+      add-mappings: false
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    deserialization:
+      fail-on-unknown-properties: true
+
+logging:
+  level:
+    root: ${LOG_LEVEL:INFO}
+  structured:
+    format:
+      console: ecs
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /docs
+
+probe:
+  # 单个目标的探测超时（毫秒）：请求未显式指定 timeoutMs 时的缺省值
+  default-timeout-ms: ${PROBE_DEFAULT_TIMEOUT_MS:3000}
+  # 请求可显式指定的 timeoutMs 上限
+  max-timeout-ms: ${PROBE_MAX_TIMEOUT_MS:10000}
+  # 全局同时在途的 TCP 连接数上限（跨任务共享）
+  max-concurrency: ${PROBE_MAX_CONCURRENCY:100}
+  task:
+    # 单个任务最多目标数（批量上限）
+    max-targets: ${TASK_MAX_TARGETS:200}
+    # 同时存在（未终态）的任务数上限，超出返回 503 背压
+    max-active: ${TASK_MAX_ACTIVE:100}
+    # 终态任务在内存中的保留时长（秒）
+    ttl-seconds: ${TASK_TTL_SECONDS:3600}
+    # 内存中最多保留的任务条数
+    max-retained: ${TASK_MAX_RETAINED:1000}
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    # 每客户端（来源 IP）每秒补充的令牌数
+    rps: ${RATE_LIMIT_RPS:5}
+    # 每客户端桶容量（允许的瞬时突发请求数）
+    burst: ${RATE_LIMIT_BURST:10}
+    # 客户端桶空闲多久后被回收（秒）
+    idle-ttl-seconds: ${RATE_LIMIT_IDLE_TTL_SECONDS:600}
