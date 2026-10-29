@@ -1,0 +1,2 @@
+# 统一换行符：仓库内一律 LF，保证 mvnw 等脚本在 Linux/macOS 可执行
+* text=auto eol=lf
