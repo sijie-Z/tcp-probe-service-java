@@ -57,7 +57,8 @@ class RateLimitApiTest {
         assertThat(limited.getStatusCode().value()).isEqualTo(429);
         JsonNode body = objectMapper.readTree(limited.getBody());
         assertThat(body.get("error").get("code").asText()).isEqualTo("RATE_LIMITED");
-        assertThat(limited.getHeaders().getFirst("Retry-After")).isNotBlank();
+        // rps=0.01、桶空 → 还需 100 秒攒够 1 个令牌；Retry-After 必须反映真实等待时间
+        assertThat(limited.getHeaders().getFirst("Retry-After")).isEqualTo("100");
         assertThat(limited.getHeaders().getFirst("X-Request-ID"))
                 .isEqualTo(body.get("error").get("request_id").asText());
 

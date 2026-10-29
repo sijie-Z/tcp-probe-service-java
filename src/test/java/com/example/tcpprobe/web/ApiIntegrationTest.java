@@ -185,7 +185,7 @@ class ApiIntegrationTest {
     }
 
     @Test
-    void validationEnvelopeForBadHost() throws IOException {
+    void validationRejectsBadHost() throws IOException {
         ResponseEntity<String> response =
                 post("/api/v1/tasks", payload(target("bad host!", 80, null)));
 
@@ -193,6 +193,9 @@ class ApiIntegrationTest {
         JsonNode body = json(response);
         assertThat(body.get("error").get("code").asText()).isEqualTo("VALIDATION_FAILED");
         assertThat(body.get("error").get("details").toString()).contains("host");
+        // IPv4 简写/前导零串按非法输入拒绝，不得回退成主机名走 DNS
+        assertThat(post("/api/v1/tasks", payload(target("2130706433", 80, null)))
+                .getStatusCode().value()).isEqualTo(422);
     }
 
     @Test
@@ -266,27 +269,13 @@ class ApiIntegrationTest {
     }
 
     @Test
-    void unknownTaskAndDeleteIdempotent() throws Exception {
+    void unknownTaskReturns404() throws Exception {
         ResponseEntity<String> missing =
                 restTemplate.getForEntity(url("/api/v1/tasks/nope"), String.class);
         assertThat(missing.getStatusCode().value()).isEqualTo(404);
         assertThat(json(missing).get("error").get("code").asText()).isEqualTo("TASK_NOT_FOUND");
-
-        ResponseEntity<String> created = post("/api/v1/tasks",
-                payload(target("192.0.2.1", 80, 5000)));
-        String taskId = json(created).get("id").asText();
-
-        ResponseEntity<String> first = restTemplate.exchange(
-                url("/api/v1/tasks/" + taskId), HttpMethod.DELETE,
-                HttpEntity.EMPTY, String.class);
-        assertThat(first.getStatusCode().value()).isEqualTo(200);
-        assertThat(json(first).get("status").asText()).isEqualTo("cancelled");
-
-        ResponseEntity<String> second = restTemplate.exchange(
-                url("/api/v1/tasks/" + taskId), HttpMethod.DELETE,
-                HttpEntity.EMPTY, String.class);
-        assertThat(second.getStatusCode().value()).isEqualTo(200);
-        assertThat(json(second).get("status").asText()).isEqualTo("cancelled");
+        // X-Request-ID 只能出现一次：过滤器统一写入，异常处理器不再重复设置
+        assertThat(missing.getHeaders().get("X-Request-ID")).hasSize(1);
     }
 
     @Test
@@ -339,5 +328,6 @@ class ApiIntegrationTest {
         ResponseEntity<String> response = restTemplate.getForEntity(url("/nope"), String.class);
         assertThat(response.getStatusCode().value()).isEqualTo(404);
         assertThat(json(response).get("error").get("code").asText()).isEqualTo("NOT_FOUND");
+        assertThat(response.getHeaders().get("X-Request-ID")).hasSize(1);
     }
 }

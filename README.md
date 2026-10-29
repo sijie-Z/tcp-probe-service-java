@@ -19,7 +19,7 @@ HTTP 接口接收**批量 TCP 连通性探测任务**，后台使用 **Java 21 �
 | 简单的限流 | 按来源 IP 的令牌桶：默认 5 rps / 突发 10，超限返回 429 + `Retry-After` |
 | 不要使用第三方封装好的探测组件 | 探测引擎完全自研：非阻塞 `SocketChannel` + `Selector` 手写带超时握手，见 [probe/ProbeEngine.java](src/main/java/com/example/tcpprobe/probe/ProbeEngine.java) |
 | 交付 Git 仓库 + README，拉下来能启动和验证 | 本仓库：`docker compose up` 或本地 Maven 两种方式；`scripts/smoke_test.py` 一键端到端验证 |
-| 3 天内完成，优先核心功能稳定、代码整洁 | 56 项测试（含 16 项 HTTP 集成测试）、`mvn test` 全绿 |
+| 3 天内完成，优先核心功能稳定、代码整洁 | 64 项测试（含 18 项 HTTP 集成测试）、`mvn test` 全绿 |
 
 ## 快速开始
 
@@ -138,7 +138,7 @@ done
 | `targets[].port` | int(1..65535) | 是 | TCP 端口（严格整数，布尔/字符串会被拒绝） |
 | `targets[].timeout_ms` | int(1..10000) | 否 | 单目标超时，缺省 3000；不得超过服务端上限 |
 
-**统一错误信封**（所有 4xx/5xx）：
+**统一错误信封**（所有 4xx/5xx；`Accept` 不兼容 JSON 的 406 由容器按内容协商返回，无信封）：
 
 ```json
 {
@@ -152,7 +152,7 @@ done
 ```
 
 常见错误码：`VALIDATION_FAILED`(422)、`TARGETS_TOO_MANY`(422)、`TIMEOUT_TOO_LARGE`(422)、`TASK_NOT_FOUND`(404)、`TASK_ALREADY_FINISHED`(409)、`TASK_CAPACITY_EXCEEDED`(503)、`RATE_LIMITED`(429)、`INTERNAL_ERROR`(500)。
-参数校验失败时 `details` 为字段级错误列表（如 `{"field": "targets[0].host", "message": "..."}`）。
+参数校验失败时 `details` 为字段级错误列表（如 `{"field": "targets.0.host", "message": "..."}`），字段路径与 Python 版一致。
 
 每个响应都带 `X-Request-ID`（调用方传入合法值则透传，否则服务端生成），与响应体 `error.request_id`、ECS 结构化日志中的 `requestId` 一一对应，便于排障。
 
@@ -173,7 +173,7 @@ done
 
 ## 限流与背压
 
-- **限流**：按来源 IP 的令牌桶，默认稳态 5 rps、突发 10（`RATE_LIMIT_RPS` / `RATE_LIMIT_BURST`）。只作用于 `/api/*`；超限返回 429 + `Retry-After`。空闲桶在 `RATE_LIMIT_IDLE_TTL_SECONDS`（默认 600s）后惰性回收，桶数另有 10 万硬上限，防止伪造来源打爆内存。
+- **限流**：按来源 IP 的令牌桶，默认稳态 5 rps、突发 10（`RATE_LIMIT_RPS` / `RATE_LIMIT_BURST`）。只作用于 `/api/*`；超限返回 429 + `Retry-After`。空闲桶在 `RATE_LIMIT_IDLE_TTL_SECONDS`（默认 600s）后惰性回收，桶数另有 10 万硬上限，超出时按遍历顺序近似随机淘汰（O(n) 截断、无排序，保证内存有界）。开启限流时 rps 下限为 1/3600，保证 `Retry-After` 反映真实等待时间。
 - **客户端 IP 取 TCP 对端地址**（`getRemoteAddr`），不信任 `X-Forwarded-For`。部署在反向代理之后时，限流会退化为按代理 IP 计算，应改由代理层做真实来源限流。
 - **背压**：活动任务数达到 `TASK_MAX_ACTIVE`（默认 100）时直接 503 + `Retry-After`，而不是无限排队；单任务目标数受 `TASK_MAX_TARGETS`（默认 200）限制。
 - **并发上限**：所有任务共享 `PROBE_MAX_CONCURRENCY`（默认 100）个在途连接许可（`Semaphore`），防止文件描述符耗尽。
@@ -216,7 +216,7 @@ done
 ./mvnw test     # Windows: mvnw.cmd test
 ```
 
-**56 项测试**，覆盖：探测状态分类（真实本地监听器：open/closed/dns_error/invalid/timeout/IPv6/多地址 closed→open）、令牌桶数学与内存治理（可注入时钟、并发放行计数）、任务编排（顺序、取消幂等、背压、关停）、任务状态（取消占位与迟到结果的并发一致性、幂等收敛）、HTTP 层（状态码、错误信封、`X-Request-ID`、参数类型错误与 null 元素 422、非 JSON Content-Type 415、429+`Retry-After`、503 背压、异步轮询、500 信封）。测试不依赖外网。
+**64 项测试**，覆盖：探测状态分类（真实本地监听器：open/closed/dns_error/invalid/timeout/IPv6/多地址 closed→open，另有注入缝的确定性超时）、令牌桶数学与内存治理（可注入时钟、并发放行计数）、任务编排（顺序、取消幂等、背压、关停）、任务状态（取消占位与迟到结果的并发一致性、终态后拒绝 markRunning、幂等收敛）、主机名校验（IPv4 简写拒绝）、HTTP 层（状态码、错误信封、`X-Request-ID` 单头断言、参数类型错误与 null 元素 422、非 JSON Content-Type 415、429+`Retry-After` 实测数值、并发准入仅 1 个成功、503 背压、异步轮询、500 信封）。测试不依赖外网。
 
 > 环境说明：`closed` 依赖系统对未监听端口回 RST。若机器上防火墙 stealth 模式或代理软件
 > **延迟**送达 RST（实测某安全软件延迟约 2 秒），测试与冒烟脚本为 closed 目标预留了大于
@@ -238,7 +238,7 @@ tcp-probe-service-java/
 │   ├── store/         # TaskStore：TTL + 容量治理
 │   ├── support/       # HostRules、@ValidHost、@StrictInt
 │   └── web/           # 控制器、过滤器（request id / 限流）、全局异常处理
-├── src/test/java/     # 56 项 JUnit 5 测试
+├── src/test/java/     # 64 项 JUnit 5 测试
 ├── scripts/smoke_test.py   # 端到端冒烟脚本（与 Python 版共用）
 ├── docs/              # DESIGN.md / INTERVIEW_QA.md
 ├── Dockerfile / docker-compose.yml / .dockerignore

@@ -1,7 +1,5 @@
 package com.example.tcpprobe.ratelimit;
 
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -175,7 +173,7 @@ public final class ClientRateLimiter {
      * 执行清扫：TTL 回收 + 硬上限淘汰，并重置计数与冷却计时。
      *
      * <p>调用方必须持有本对象的锁（惰性路径与 {@link #sweep()} 均通过 synchronized 方法进入）。
-     * 硬上限淘汰只在超限时创建一次按 lastSeen 升序的排序视图，最多每秒一次，成本可控。
+     * 一次清扫是 O(n) 遍历（无排序），且受 1 秒冷却与 10 万硬上限约束，单次成本有界。
      */
     private int sweepInternal(double now) {
         int removed = 0;
@@ -191,10 +189,15 @@ public final class ClientRateLimiter {
 
         int excess = buckets.size() - maxKeys;
         if (excess > 0) {
-            var oldestFirst = new ArrayList<>(buckets.entrySet());
-            oldestFirst.sort(Comparator.comparingDouble(entry -> entry.getValue().lastSeenSeconds));
-            for (int index = 0; index < excess; index++) {
-                buckets.remove(oldestFirst.get(index).getKey());
+            // 单次 O(n) 迭代按桶的遍历顺序截断，避免 10 万级桶的排序（O(n log n)）
+            // 在请求锁内放大；淘汰是近似随机的——攻击场景下只要求内存有界，
+            // 不追求精确 LRU（精确 LRU 需要有序结构，代价更大）。
+            var evictionIterator = buckets.keySet().iterator();
+            int evicted = 0;
+            while (evicted < excess && evictionIterator.hasNext()) {
+                evictionIterator.next();
+                evictionIterator.remove();
+                evicted++;
                 removed++;
             }
         }

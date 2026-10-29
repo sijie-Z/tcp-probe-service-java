@@ -200,7 +200,8 @@ public class GlobalExceptionHandler {
         String requestId = requestId(request);
         HttpHeaders merged = new HttpHeaders();
         merged.putAll(headers);
-        merged.set("X-Request-ID", requestId);
+        // X-Request-ID 由 RequestContextFilter 统一写入（它在链上覆盖所有响应路径）；
+        // 这里不再重复 set，否则容器会输出两个同名响应头。
         ErrorResponse body = details == null
                 ? ErrorResponse.of(code, message, requestId)
                 : ErrorResponse.of(code, message, requestId, details);

@@ -3,6 +3,7 @@ package com.example.tcpprobe.config;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -21,8 +22,8 @@ public record ProbeProperties(
         @Min(1) int defaultTimeoutMs,
         @Min(1) int maxTimeoutMs,
         @Min(1) int maxConcurrency,
-        @Valid Task task,
-        @Valid RateLimit rateLimit) {
+        @Valid @NotNull(message = "probe.task 配置段缺失") Task task,
+        @Valid @NotNull(message = "probe.rate-limit 配置段缺失") RateLimit rateLimit) {
 
     @AssertTrue(message = "probe.default-timeout-ms 不能大于 probe.max-timeout-ms")
     public boolean isTimeoutRangeValid() {
@@ -35,9 +36,9 @@ public record ProbeProperties(
                 || (Double.isFinite(rateLimit.rps()) && rateLimit.rps() >= 0);
     }
 
-    @AssertTrue(message = "限流开启时 probe.rate-limit.rps 必须大于 0 且不小于 1e-6")
+    @AssertTrue(message = "限流开启时 probe.rate-limit.rps 必须大于 0 且不小于 1/3600（保证 Retry-After 反映真实等待时间）")
     public boolean isRateEnabledSane() {
-        return rateLimit != null && (!rateLimit.enabled() || rateLimit.rps() >= 1e-6);
+        return rateLimit != null && (!rateLimit.enabled() || rateLimit.rps() >= 1.0 / 3600.0);
     }
 
     @AssertTrue(message = "probe.rate-limit.idle-ttl-seconds 必须是有限正数")

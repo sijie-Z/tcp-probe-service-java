@@ -78,23 +78,39 @@ public class TaskService {
                                 + "（host=" + target.host() + ":" + target.port() + "）");
             }
         }
-        if (store.countActive() >= properties.task().maxActive()) {
-            throw new TaskCapacityException(properties.task().maxActive());
-        }
-
         TaskState task = new TaskState(UUID.randomUUID().toString().replace("-", ""),
                 request.name(), targets);
-        store.add(task);
-        Future<?> coordinator = coordinatorExecutor.submit(() -> run(task, targets));
-        coordinators.put(task.getId(), coordinator);
+        // 原子准入：检查与注册在同一临界区，并发提交不会突破 max-active 背压
+        if (!store.tryAddActive(task, properties.task().maxActive())) {
+            throw new TaskCapacityException(properties.task().maxActive());
+        }
+        try {
+            Future<?> coordinator = coordinatorExecutor.submit(() -> run(task, targets));
+            coordinators.put(task.getId(), coordinator);
+            if (coordinator.isDone()) {
+                // 极快任务可能在 put 之前就完成并已自清理，避免残留条目
+                coordinators.remove(task.getId(), coordinator);
+            }
+        } catch (RuntimeException ex) {
+            store.remove(task.getId());
+            throw ex;
+        }
         return task;
     }
 
     private void run(TaskState task, List<ProbeTarget> targets) {
-        task.markRunning();
+        if (!task.markRunning()) {
+            // 已取消或已收敛终态（如提交后未及调度即被取消）：不再启动任何探测
+            task.fillMissing(TargetStatus.CANCELLED, "任务已取消");
+            task.finish(TaskStatus.CANCELLED, null);
+            return;
+        }
         try {
             List<Future<?>> futures = new ArrayList<>(targets.size());
             for (int index = 0; index < targets.size(); index++) {
+                if (task.isCancelRequested() || Thread.currentThread().isInterrupted()) {
+                    break; // 取消后不再提交新的探测；未提交的槽位由收尾补 cancelled
+                }
                 final int slot = index;
                 final ProbeTarget target = targets.get(index);
                 Future<?> future = probeExecutor.submit(() -> probeSlot(task, slot, target));
@@ -197,18 +213,38 @@ public class TaskService {
 
     @PreDestroy
     public void shutdown() {
+        List<TaskState> running = new ArrayList<>();
         for (String taskId : List.copyOf(coordinators.keySet())) {
-            try {
-                cancel(taskId);
-            } catch (RuntimeException ignored) {
-                // 关停期间的收敛失败不阻塞退出
+            TaskState task = store.find(taskId);
+            if (task == null) {
+                continue;
+            }
+            synchronized (task) {
+                if (!task.isTerminal()) {
+                    task.requestCancel();
+                    running.add(task);
+                }
+            }
+            task.cancelProbeFutures();
+            Future<?> coordinator = coordinators.remove(taskId);
+            if (coordinator != null) {
+                coordinator.cancel(true);
+            }
+        }
+        // 统一截止时间（5 秒）内等待收敛，避免逐任务串行等待拖长优雅关停
+        long deadline = System.currentTimeMillis() + 5000;
+        for (TaskState task : running) {
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0 || !task.awaitCompletion(remaining)) {
+                task.fillMissing(TargetStatus.CANCELLED, "服务关停");
+                task.finish(TaskStatus.CANCELLED, null);
             }
         }
         probeExecutor.shutdownNow();
         coordinatorExecutor.shutdownNow();
         try {
-            probeExecutor.awaitTermination(5, TimeUnit.SECONDS);
-            coordinatorExecutor.awaitTermination(5, TimeUnit.SECONDS);
+            probeExecutor.awaitTermination(3, TimeUnit.SECONDS);
+            coordinatorExecutor.awaitTermination(3, TimeUnit.SECONDS);
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
         }

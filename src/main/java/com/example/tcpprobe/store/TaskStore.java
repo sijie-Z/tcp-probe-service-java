@@ -38,10 +38,31 @@ public class TaskStore {
         this.clockSeconds = clockSeconds;
     }
 
-    public void add(TaskState task) {
+    public synchronized void add(TaskState task) {
         sweepExpired();
         tasks.put(task.getId(), task);
         trimToCapacity();
+    }
+
+    /**
+     * 原子准入：在同一个临界区内完成「活动计数检查 + 注册」，避免
+     * check-then-act 竞态让并发提交突破 max-active 背压。
+     *
+     * @return false 表示活动任务已达上限，未注册该任务
+     */
+    public synchronized boolean tryAddActive(TaskState task, int maxActive) {
+        sweepExpired();
+        if (countActive() >= maxActive) {
+            return false;
+        }
+        tasks.put(task.getId(), task);
+        trimToCapacity();
+        return true;
+    }
+
+    /** 提交阶段失败时回滚注册（如执行器已关停）。 */
+    public void remove(String taskId) {
+        tasks.remove(taskId);
     }
 
     public TaskState find(String taskId) {

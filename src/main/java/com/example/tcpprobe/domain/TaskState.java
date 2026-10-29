@@ -101,17 +101,36 @@ public final class TaskState {
         return cancelRequested;
     }
 
-    public void markRunning() {
+    /**
+     * 进入运行态；若任务已取消或已收敛终态则拒绝并返回 false。
+     *
+     * <p>与 {@link #finish} 使用同一把对象锁：取消线程先把任务收敛为 CANCELLED 后，
+     * 迟到的协调线程调用本方法会得到 false，不会把终态翻回 RUNNING。
+     */
+    public synchronized boolean markRunning() {
+        if (status.isTerminal() || cancelRequested) {
+            return false;
+        }
         status = TaskStatus.RUNNING;
         startedAt = Instant.now();
+        return true;
     }
 
     public void requestCancel() {
         cancelRequested = true;
     }
 
+    /**
+     * 登记探测 Future；若任务已被取消，立即取消该 Future。
+     *
+     * <p>取消与登记之间没有先后假设：取消后才提交/登记的探测会被就地取消，
+     * 不会出现"取消后仍启动新探测"的窗口。
+     */
     public void registerProbeFuture(Future<?> future) {
         probeFutures.add(future);
+        if (cancelRequested) {
+            future.cancel(true);
+        }
     }
 
     public void cancelProbeFutures() {

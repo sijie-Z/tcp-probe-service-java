@@ -19,6 +19,9 @@ public final class HostRules {
     private static final Pattern IPV4_SHAPE =
             Pattern.compile("^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})$");
 
+    /** 纯数字/点分串：必须按严格 IPv4 解析成功，失败即整体的非法输入。 */
+    private static final Pattern NUMERIC_ONLY = Pattern.compile("^[0-9.]+$");
+
     private HostRules() {
     }
 
@@ -72,6 +75,15 @@ public final class HostRules {
         if (candidate.isEmpty()) {
             return false;
         }
-        return ipLiteralOrNull(candidate) != null || HOSTNAME.matcher(candidate).matches();
+        if (ipLiteralOrNull(candidate) != null) {
+            return true;
+        }
+        if (NUMERIC_ONLY.matcher(candidate).matches()) {
+            // 010.0.0.1 / 127.1 / 2130706433 这类串会被系统解析器当作 IP 简写处理，
+            // 且各平台（Windows / glibc 八进制）语义不一致——严格 IPv4 解析失败即拒绝，
+            // 不再回退为主机名（也是未来目标白名单的关键防绕过点）。
+            return false;
+        }
+        return HOSTNAME.matcher(candidate).matches();
     }
 }

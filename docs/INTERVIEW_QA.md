@@ -40,7 +40,7 @@
 `@PreDestroy` 遍历在途任务执行同样的取消流程，然后 `shutdownNow` 两个虚拟线程 executor 并等待清理（配合 Spring Boot `server.shutdown=graceful`）。
 
 **Q12：为什么 `TaskStore` 用 `ConcurrentHashMap` 而不用 `HashMap` + 锁？**
-读写来自 Tomcat 的多个请求线程（以及可能的探测线程回调），`ConcurrentHashMap` 的并发读写语义足够；存储操作都是短小的 put/remove/get，没有跨多步的复合操作需要原子化，不需要额外全局锁。
+读写来自 Tomcat 的多个请求线程（以及可能的探测线程回调），`ConcurrentHashMap` 的并发读写语义足够；常规读写是短小的 put/remove/get，唯一需要原子性的「活动计数检查 + 注册」复合操作已下沉到 `TaskStore.tryAddActive()`（synchronized），并发提交不会突破 max-active 背压。
 
 **Q13：`application.yml` 里为什么用 `${ENV:default}` 占位符而不是 `@ConfigurationProperties` 直接绑定环境变量？**
 Spring 的 relaxed binding 会把 `PROBE_DEFAULT_TIMEOUT_MS` 解释成 `probe.default.timeout.ms`（下划线当层级分隔），和 `probe.default-timeout-ms` 对不上；显式占位符让环境变量名与 Python 版保持一致、可读可审计。`ProbeProperties` 仍然是强类型 record + Bean Validation。
@@ -49,10 +49,10 @@ Spring 的 relaxed binding 会把 `PROBE_DEFAULT_TIMEOUT_MS` 解释成 `probe.de
 题目要求"简单的限流"，令牌桶 ~60 行可读实现，无额外依赖、行为完全可控；第三方库的配置面反而增加答辩成本。且限流键需要按来源 IP（未来可换 API Key），自研替换最直接。
 
 **Q15：限流桶的并发与内存治理？**
-`ClientRateLimiter.check` 一个 `synchronized` 临界区（O(1) 内存运算，与网络耗时相比可忽略，注释说明了取舍）。内存治理：每 key 一个桶 + `lastSeen`，每 1024 次检查或桶数超 4096 触发惰性清扫（两次清扫至少间隔 1 秒，避免桶数超阈值后每个请求都做全表扫描），桶数还有 10 万硬上限，超出按最近活跃时间淘汰。
+`ClientRateLimiter.check` 一个 `synchronized` 临界区（常规路径 O(1)；清扫为 O(n) 遍历、无排序，受 1 秒冷却与硬上限约束，注释说明了取舍）。内存治理：每 key 一个桶 + `lastSeen`，每 1024 次检查或桶数超 4096 触发惰性清扫（两次清扫至少间隔 1 秒，避免桶数超阈值后每个请求都做全表扫描），桶数还有 10 万硬上限，超出按遍历顺序近似随机淘汰（保证内存有界）。
 
 **Q16：`Retry-After` 怎么算？**
-`ceil((1 - tokens) / rps)`，至少 1 秒；上限 3600 秒防止极小 rps 配置把取整推到溢出。响应头整数秒。
+`ceil((1 - tokens) / rps)`，至少 1 秒。开启限流时 rps 下限为 1/3600，保证等待时间不超过 3600 秒；响应头仍以 3600 秒封顶作为防御性边界。响应头整数秒。
 
 **Q17：为什么参数校验要写 `@StrictInt`？**
 Jackson 默认 lax 模式会把 JSON `true` 反序列化成 1、把数字字符串当整数，与 API 文档的 int 语义不符。`@StrictInt` 是自定义反序列化器，只接受 `VALUE_NUMBER_INT`，在请求边界直接 422，和 Python 版的 StrictInt 行为一致。
@@ -72,7 +72,7 @@ Jackson 默认 lax 模式会把 JSON `true` 反序列化成 1、把数字字符�
 `ProbeEngineTest` 通过包内可见的 `probeWith(...)` 注入 `Connector`，直接抛 `SocketTimeoutException`，确定性、零网络依赖。真实黑洞地址在不同网络环境下可能快速 `NoRouteToHost`，不稳定。
 
 **Q22：怎么让本地端口表现为 open / closed？**
-open：`ServerSocket` 监听但**不 accept**——内核在 backlog 未满时会完成三次握手，客户端 connect 成功；closed：绑定端口拿到随机端口号后立即关闭，后续 connect 得到 RST。注意本机安全软件可能把 RST 延迟约 2 秒才送达，所以测试用 3000ms 预算断言严格 `closed`。
+open：`ServerSocket` 监听但**不 accept**——内核在 backlog 未满时会完成三次握手，客户端 connect 成功；closed：绑定端口拿到随机端口号后立即关闭，后续 connect 得到 RST。注意本机安全软件可能把 RST 延迟约 2 秒才送达，所以 closed 用例用 5000ms 预算断言严格 `closed`。
 
 **Q23：为什么要有 HTTP 集成测试，单测不够吗？**
 状态码、错误信封、过滤器顺序、`X-Request-ID`、429/503 这些都是"组装后"才成立的行为；`@SpringBootTest(RANDOM_PORT)` 用真实 HTTP 栈验证，才能防住"Bean 装配/顺序"类问题（例如本次开发中就抓到了与 Spring Boot 自动配置的 bean 名冲突）。

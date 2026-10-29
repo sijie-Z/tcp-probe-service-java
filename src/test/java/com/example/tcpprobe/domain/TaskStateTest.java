@@ -48,4 +48,33 @@ class TaskStateTest {
         assertThat(task.getStatus()).isEqualTo(TaskStatus.SUCCEEDED);
         assertThat(task.awaitCompletion(10)).isTrue();
     }
+
+    @Test
+    void markRunningRefusesAfterCancelOrTerminal() {
+        TaskState cancelled = singleTargetTask();
+        cancelled.requestCancel();
+        cancelled.fillMissing(TargetStatus.CANCELLED, "任务已取消");
+        cancelled.finish(TaskStatus.CANCELLED, null);
+
+        // 取消/终态后迟到的协调线程不得把状态翻回 RUNNING
+        assertThat(cancelled.markRunning()).isFalse();
+        assertThat(cancelled.getStatus()).isEqualTo(TaskStatus.CANCELLED);
+
+        TaskState finished = singleTargetTask();
+        finished.finish(TaskStatus.SUCCEEDED, null);
+        assertThat(finished.markRunning()).isFalse();
+        assertThat(finished.getStatus()).isEqualTo(TaskStatus.SUCCEEDED);
+    }
+
+    @Test
+    void registerProbeFutureCancelsLateRegistrations() {
+        TaskState task = singleTargetTask();
+        task.requestCancel();
+
+        var future = new java.util.concurrent.CompletableFuture<Void>();
+        task.registerProbeFuture(future);
+
+        // 取消后才登记/提交的探测必须就地取消，不能继续启动
+        assertThat(future.isCancelled()).isTrue();
+    }
 }

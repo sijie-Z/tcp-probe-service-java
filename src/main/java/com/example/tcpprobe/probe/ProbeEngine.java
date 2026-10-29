@@ -35,8 +35,9 @@ import java.util.concurrent.TimeoutException;
  *
  * <h2>状态判定（优先级 open &gt; closed &gt; timeout &gt; unreachable）</h2>
  * <ul>
- *   <li>{@code open}：握手成功。{@code latencyMs} 只统计握手阶段（nanoTime 差值，
- *       毫秒保留 3 位小数），不含 DNS 耗时；{@code resolvedIp} 为命中地址。</li>
+ *   <li>{@code open}：握手成功。{@code latencyMs} 为一次连接建立的总耗时（含
+ *       SocketChannel/Selector 本地准备与握手；nanoTime 差值，毫秒保留 3 位小数），
+ *       不含 DNS 耗时；{@code resolvedIp} 为命中地址。</li>
  *   <li>{@code closed}：某地址被明确拒绝（{@link ConnectException} / RST）。此时不立即
  *       返回，而是记为 best-so-far 继续尝试其余地址（多 A/AAAA 记录时后续地址仍可能
  *       open）；最终无 open 才返回 closed，{@code resolvedIp} 为被拒地址，
