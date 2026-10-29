@@ -1,0 +1,44 @@
+# Docker 构建上下文排除清单：镜像构建只需要 pom.xml 与 src/main
+#
+# 重要：本仓库 Dockerfile 用 `mvn -B -q package -Dmaven.test.skip=true` 打包
+# （连测试源码都不编译），所以下面可以排除 src/test；
+# 若把 Dockerfile 改为 -DskipTests（仍编译测试源码），必须删除本文件中的 src/test 一行。
+
+# ---- 版本控制 ----
+.git
+.gitignore
+
+# ---- 构建产物与本地环境（镜像内会重新构建）----
+target/
+.scratch/
+*.log
+logs/
+
+# ---- 测试源码（Dockerfile 使用 -Dmaven.test.skip=true，不编译也不需要测试源码）----
+src/test
+
+# ---- 与镜像构建无关的开发 / 交付资产 ----
+docs/
+scripts/
+README.md
+Makefile
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# ---- 本地配置与密钥（.env.example 仅供文档参考，镜像内不需要）----
+.env
+.env.*
+
+# ---- Python 冒烟脚本缓存 ----
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# ---- 编辑器 / 系统文件 ----
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
