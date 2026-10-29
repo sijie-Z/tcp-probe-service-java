@@ -201,9 +201,47 @@ class ApiIntegrationTest {
         assertThat(post("/api/v1/tasks",
                 "{\"targets\":[{\"host\":\"a.com\",\"port\":80}],\"extra\":1}")
                 .getStatusCode().value()).isEqualTo(422);
-        assertThat(post("/api/v1/tasks",
-                "{\"targets\":[{\"host\":\"127.0.0.1\",\"port\":true}]}")
-                .getStatusCode().value()).isEqualTo(422);
+
+        ResponseEntity<String> boolPort = post("/api/v1/tasks",
+                "{\"targets\":[{\"host\":\"127.0.0.1\",\"port\":true}]}");
+        assertThat(boolPort.getStatusCode().value()).isEqualTo(422);
+        JsonNode body = json(boolPort);
+        assertThat(body.get("error").get("code").asText()).isEqualTo("VALIDATION_FAILED");
+        // details 为文档化的字段级列表，解析层失败也必须给出（不能为 null）
+        assertThat(body.get("error").get("details").isArray()).isTrue();
+        assertThat(body.get("error").get("details")).isNotEmpty();
+    }
+
+    @Test
+    void nullTargetElementAndWaitBoundsReturnValidationFailed() throws IOException {
+        ResponseEntity<String> nullElement = post("/api/v1/tasks", "{\"targets\":[null]}");
+        assertThat(nullElement.getStatusCode().value()).isEqualTo(422);
+        assertThat(json(nullElement).get("error").get("code").asText())
+                .isEqualTo("VALIDATION_FAILED");
+
+        for (String timeoutValue : new String[] {"0", "60001"}) {
+            ResponseEntity<String> badWait = post(
+                    "/api/v1/tasks?wait=true&wait_timeout_ms=" + timeoutValue,
+                    "{\"targets\":[{\"host\":\"127.0.0.1\",\"port\":1}]}");
+            assertThat(badWait.getStatusCode().value()).isEqualTo(422);
+            JsonNode error = json(badWait).get("error");
+            assertThat(error.get("code").asText()).isEqualTo("VALIDATION_FAILED");
+            // 字段名与 Python 版一致：query.wait_timeout_ms
+            assertThat(error.get("details").toString()).contains("query.wait_timeout_ms");
+        }
+    }
+
+    @Test
+    void unsupportedContentTypeReturns415EnvelopeInsteadOf500() throws IOException {
+        HttpHeaders headers = new HttpHeaders();
+        // 无 Content-Type 的请求会被当作 octet-stream：转换器不可用时必须是 415，不能 500
+        headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+        ResponseEntity<String> response = restTemplate.postForEntity(url("/api/v1/tasks"),
+                new HttpEntity<>("{\"targets\":[{\"host\":\"127.0.0.1\",\"port\":1}]}", headers),
+                String.class);
+        assertThat(response.getStatusCode().value()).isEqualTo(415);
+        assertThat(json(response).get("error").get("code").asText())
+                .isEqualTo("UNSUPPORTED_MEDIA_TYPE");
     }
 
     @Test
@@ -277,6 +315,23 @@ class ApiIntegrationTest {
         assertThat(body.get("error").get("code").asText()).isEqualTo("INTERNAL_ERROR");
         assertThat(body.get("error").get("request_id").asText()).isEqualTo("trace-500");
         assertThat(response.getHeaders().getFirst("X-Request-ID")).isEqualTo("trace-500");
+    }
+
+    @Test
+    void invalidQueryParamTypesReturn422() throws IOException {
+        ResponseEntity<String> badLimit =
+                restTemplate.getForEntity(url("/api/v1/tasks?limit=abc"), String.class);
+        assertThat(badLimit.getStatusCode().value()).isEqualTo(422);
+        assertThat(json(badLimit).get("error").get("code").asText()).isEqualTo("VALIDATION_FAILED");
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<String> badWait = restTemplate.postForEntity(
+                url("/api/v1/tasks?wait=true&wait_timeout_ms=abc"),
+                new HttpEntity<>("{\"targets\":[{\"host\":\"127.0.0.1\",\"port\":1}]}", headers),
+                String.class);
+        assertThat(badWait.getStatusCode().value()).isEqualTo(422);
+        assertThat(json(badWait).get("error").get("code").asText()).isEqualTo("VALIDATION_FAILED");
     }
 
     @Test

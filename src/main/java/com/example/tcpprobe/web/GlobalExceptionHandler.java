@@ -5,6 +5,7 @@ import com.example.tcpprobe.service.ProbeRequestException;
 import com.example.tcpprobe.service.TaskAlreadyFinishedException;
 import com.example.tcpprobe.service.TaskCapacityException;
 import com.example.tcpprobe.service.TaskNotFoundException;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
@@ -18,6 +19,8 @@ import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -63,7 +66,8 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> onValidation(
             MethodArgumentNotValidException ex, HttpServletRequest request) {
         List<ErrorResponse.FieldError> details = ex.getBindingResult().getFieldErrors().stream()
-                .map(error -> new ErrorResponse.FieldError(error.getField(), error.getDefaultMessage()))
+                .map(error -> new ErrorResponse.FieldError(
+                        normalizeBodyField(error.getField()), error.getDefaultMessage()))
                 .toList();
         return build(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_FAILED",
                 "请求参数校验失败", request, details, new HttpHeaders());
@@ -74,7 +78,33 @@ public class GlobalExceptionHandler {
             ConstraintViolationException ex, HttpServletRequest request) {
         List<ErrorResponse.FieldError> details = ex.getConstraintViolations().stream()
                 .map(violation -> new ErrorResponse.FieldError(
-                        violation.getPropertyPath().toString(), violation.getMessage()))
+                        normalizeQueryParam(violation.getPropertyPath().toString()),
+                        violation.getMessage()))
+                .toList();
+        return build(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_FAILED",
+                "请求参数校验失败", request, details, new HttpHeaders());
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> onTypeMismatch(
+            MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
+        String expected = ex.getRequiredType() == null ? "未知" : ex.getRequiredType().getSimpleName();
+        List<ErrorResponse.FieldError> details = List.of(new ErrorResponse.FieldError(
+                normalizeQueryParam(ex.getName()), "参数类型不正确，期望 " + expected));
+        return build(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_FAILED",
+                "请求参数校验失败", request, details, new HttpHeaders());
+    }
+
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<ErrorResponse> onHandlerMethodValidation(
+            HandlerMethodValidationException ex, HttpServletRequest request) {
+        List<ErrorResponse.FieldError> details = ex.getParameterValidationResults().stream()
+                .map(result -> new ErrorResponse.FieldError(
+                        normalizeQueryParam(
+                                result.getMethodParameter().getParameterName()),
+                        result.getResolvableErrors().isEmpty()
+                                ? "参数不合法"
+                                : result.getResolvableErrors().get(0).getDefaultMessage()))
                 .toList();
         return build(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_FAILED",
                 "请求参数校验失败", request, details, new HttpHeaders());
@@ -83,8 +113,23 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorResponse> onUnreadable(
             HttpMessageNotReadableException ex, HttpServletRequest request) {
+        String field = "";
+        String message = "请求体解析失败";
+        Throwable cause = ex.getMostSpecificCause();
+        if (cause instanceof JsonMappingException mappingException) {
+            field = normalizeBodyField(mappingException.getPath().stream()
+                    .map(reference -> reference.getFieldName() != null
+                            ? reference.getFieldName()
+                            : "[" + reference.getIndex() + "]")
+                    .reduce((left, right) -> right.startsWith("[") ? left + right : left + "." + right)
+                    .orElse(""));
+            message = mappingException.getOriginalMessage();
+        } else if (cause != null) {
+            message = cause.getClass().getSimpleName();
+        }
+        List<ErrorResponse.FieldError> details = List.of(new ErrorResponse.FieldError(field, message));
         return build(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_FAILED",
-                "请求体不是合法 JSON 或字段类型不符", request);
+                "请求体不是合法 JSON 或字段类型不符", request, details, new HttpHeaders());
     }
 
     @ExceptionHandler({NoHandlerFoundException.class, NoResourceFoundException.class})
@@ -119,6 +164,29 @@ public class GlobalExceptionHandler {
     private static String requestId(HttpServletRequest request) {
         Object value = request.getAttribute(RequestContextFilter.ATTR_REQUEST_ID);
         return value == null ? "" : value.toString();
+    }
+
+    /**
+     * 请求体字段路径规范化：{@code targets[0].port} → {@code targets.0.port}（与 Python 版一致）。
+     */
+    private static String normalizeBodyField(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return "";
+        }
+        return raw.replaceAll("\\[(\\d+)]", ".$1");
+    }
+
+    /**
+     * 查询参数名规范化：{@code list.limit} / {@code create.waitTimeoutMs} → {@code query.limit} /
+     * {@code query.wait_timeout_ms}（与 Python 版一致的 query 前缀 + snake_case）。
+     */
+    private static String normalizeQueryParam(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return "query.";
+        }
+        String name = raw.substring(raw.lastIndexOf('.') + 1);
+        name = name.replaceAll("([a-z0-9])([A-Z])", "$1_$2").toLowerCase();
+        return "query." + name;
     }
 
     private static ResponseEntity<ErrorResponse> build(

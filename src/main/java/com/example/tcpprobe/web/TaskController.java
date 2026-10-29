@@ -4,7 +4,6 @@ import com.example.tcpprobe.domain.TaskState;
 import com.example.tcpprobe.model.CreateTaskRequest;
 import com.example.tcpprobe.model.TaskResponse;
 import com.example.tcpprobe.model.TaskSummary;
-import com.example.tcpprobe.service.ProbeRequestException;
 import com.example.tcpprobe.service.TaskService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -38,10 +37,9 @@ public class TaskController {
     public ResponseEntity<TaskResponse> create(
             @Valid @RequestBody CreateTaskRequest request,
             @RequestParam(value = "wait", defaultValue = "false") boolean wait,
-            @RequestParam(value = "wait_timeout_ms", defaultValue = "10000") long waitTimeoutMs) {
-        if (waitTimeoutMs < 1 || waitTimeoutMs > 60_000) {
-            throw new ProbeRequestException("INVALID_WAIT_TIMEOUT", "wait_timeout_ms 取值范围 1-60000");
-        }
+            @RequestParam(value = "wait_timeout_ms", defaultValue = "10000")
+            @Min(value = 1, message = "wait_timeout_ms 取值范围 1-60000")
+            @Max(value = 60000, message = "wait_timeout_ms 取值范围 1-60000") long waitTimeoutMs) {
         TaskState task = service.submit(request);
         if (wait) {
             task.awaitCompletion(waitTimeoutMs);

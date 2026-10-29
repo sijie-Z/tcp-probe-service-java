@@ -3,7 +3,9 @@
 HTTP 接口接收**批量 TCP 连通性探测任务**，后台使用 **Java 21 虚拟线程 + 纯 JDK 自研探测引擎**（`SocketChannel` + `Selector`，未使用任何第三方探测组件）执行探测，按**来源 IP 的令牌桶限流**，结果按提交顺序返回。
 
 > 北京悦游信息技术有限公司 招聘作业，Java 实现。另有一份 Python 实现（`sijie-Z/tcp-probe-service`），
-> **两版 API 契约完全一致**，共用同一份端到端冒烟脚本交叉验收。
+> **两版核心 API 契约一致**（端点、字段、错误码、状态语义、限流参数、`X-Request-ID`），
+> 共用同一份端到端冒烟脚本交叉验收；边缘行为差异（尾斜杠处理、405 的 `Allow` 头集合、
+> `dns_error` 细节文本等）见文末「与 Python 实现的关系」。
 > 完整设计说明见 [docs/DESIGN.md](docs/DESIGN.md)，实现细节问答见 [docs/INTERVIEW_QA.md](docs/INTERVIEW_QA.md)。
 
 ## 需求对照
@@ -15,9 +17,9 @@ HTTP 接口接收**批量 TCP 连通性探测任务**，后台使用 **Java 21 �
 | 返回探测结果 | 每个目标返回：状态、`resolved_ip`、握手耗时 `latency_ms`、失败原因 |
 | 支持批量探测 | 单任务最多 200 个目标，全局同时在途连接数上限 100（均可配置） |
 | 简单的限流 | 按来源 IP 的令牌桶：默认 5 rps / 突发 10，超限返回 429 + `Retry-After` |
-| 不要使用第三方封装好的探测组件 | 探测引擎完全自研：非阻塞 `SocketChannel` + `Selector` 手写带超时握手，见 [app/probe/ProbeEngine.java](src/main/java/com/example/tcpprobe/probe/ProbeEngine.java) |
+| 不要使用第三方封装好的探测组件 | 探测引擎完全自研：非阻塞 `SocketChannel` + `Selector` 手写带超时握手，见 [probe/ProbeEngine.java](src/main/java/com/example/tcpprobe/probe/ProbeEngine.java) |
 | 交付 Git 仓库 + README，拉下来能启动和验证 | 本仓库：`docker compose up` 或本地 Maven 两种方式；`scripts/smoke_test.py` 一键端到端验证 |
-| 3 天内完成，优先核心功能稳定、代码整洁 | 50 项测试（含 11 项 HTTP 集成测试）、`mvn test` 全绿 |
+| 3 天内完成，优先核心功能稳定、代码整洁 | 56 项测试（含 16 项 HTTP 集成测试）、`mvn test` 全绿 |
 
 ## 快速开始
 
@@ -37,10 +39,13 @@ java -jar target/tcp-probe-service-1.0.0.jar
 # 或者：./mvnw spring-boot:run
 ```
 
+> Maven Wrapper 默认从阿里云镜像下载 Maven 发行版（国内网络更快）；如需官方源，修改
+> `.mvn/wrapper/maven-wrapper.properties` 的 `distributionUrl` 即可。
+
 启动后：
 
 - 服务信息：<http://127.0.0.1:8000/>
-- 交互式 API 文档（Swagger UI）：<http://127.0.0.1:8000/docs>
+- 交互式 API 文档（Swagger UI）：<http://127.0.0.1:8000/docs>（会 302 跳转到 `/swagger-ui/index.html`，浏览器无感；用 curl 验证请加 `-L`）
 - 存活探针：<http://127.0.0.1:8000/healthz>（不参与限流）
 
 ## 验证
@@ -211,7 +216,7 @@ done
 ./mvnw test     # Windows: mvnw.cmd test
 ```
 
-**50 项测试**，覆盖：探测状态分类（真实本地监听器：open/closed/dns_error/invalid/timeout/IPv6/多地址 closed→open）、令牌桶数学与内存治理（可注入时钟、并发放行计数）、任务编排（顺序、取消幂等、背压、关停）、HTTP 层（状态码、错误信封、`X-Request-ID`、429+`Retry-After`、503 背压、异步轮询、500 信封）。测试不依赖外网。
+**56 项测试**，覆盖：探测状态分类（真实本地监听器：open/closed/dns_error/invalid/timeout/IPv6/多地址 closed→open）、令牌桶数学与内存治理（可注入时钟、并发放行计数）、任务编排（顺序、取消幂等、背压、关停）、任务状态（取消占位与迟到结果的并发一致性、幂等收敛）、HTTP 层（状态码、错误信封、`X-Request-ID`、参数类型错误与 null 元素 422、非 JSON Content-Type 415、429+`Retry-After`、503 背压、异步轮询、500 信封）。测试不依赖外网。
 
 > 环境说明：`closed` 依赖系统对未监听端口回 RST。若机器上防火墙 stealth 模式或代理软件
 > **延迟**送达 RST（实测某安全软件延迟约 2 秒），测试与冒烟脚本为 closed 目标预留了大于
@@ -233,7 +238,7 @@ tcp-probe-service-java/
 │   ├── store/         # TaskStore：TTL + 容量治理
 │   ├── support/       # HostRules、@ValidHost、@StrictInt
 │   └── web/           # 控制器、过滤器（request id / 限流）、全局异常处理
-├── src/test/java/     # 50 项 JUnit 5 测试
+├── src/test/java/     # 56 项 JUnit 5 测试
 ├── scripts/smoke_test.py   # 端到端冒烟脚本（与 Python 版共用）
 ├── docs/              # DESIGN.md / INTERVIEW_QA.md
 ├── Dockerfile / docker-compose.yml / .dockerignore
@@ -254,6 +259,16 @@ tcp-probe-service-java/
 
 同一道题提供了两套独立实现（`sijie-Z/tcp-probe-service` 为 Python 版，本仓库为 Java 版）：
 
-- **外部契约完全一致**：端点、请求/响应字段、错误码、状态语义、限流参数、`X-Request-ID` 行为对齐；
+- **核心契约一致**：端点、请求/响应字段、错误码、状态语义、限流参数、`X-Request-ID` 行为对齐（40 项契约对比逐项核对，28 项逐字一致，其余为已修复项与下述边缘差异）；
 - **共用同一份冒烟脚本**：`scripts/smoke_test.py` 在两套实现上均 6/6 通过，是契约一致性的交叉验收；
 - **内部实现各自 idiom**：Python 版 asyncio 协程 + 事件循环；Java 版虚拟线程 + `SocketChannel/Selector`。两版的取舍对比见 `docs/INTERVIEW_QA.md` 最后一节。
+
+**已知边缘差异**（契约对拨实测记录，均为实现自由度内的行为，不影响主流程）：
+
+| 场景 | Python 版 | Java 版 |
+| --- | --- | --- |
+| 尾斜杠路径（如 `/api/v1/tasks/`） | 307 重定向 | 按未知路径返回 404 信封 |
+| 405 响应的 `Allow` 头 | 仅列出匹配方法 | 列出该路径全部方法（更贴近 RFC） |
+| `dns_error` 的 `error` 文本 | 含平台 errno 文案 | 统一为 `dns_error: <host>`（前缀一致） |
+| 响应 `Content-Type` | `application/json` | `application/json;charset=UTF-8` |
+| 非 JSON Content-Type 的 POST | 422 | 415（HTTP 语义更准确） |

@@ -122,10 +122,17 @@ public final class TaskState {
         }
     }
 
-    /** 探测线程写入自己的槽位并递增完成计数（每个槽位只写一次）。 */
+    /**
+     * 探测线程写入自己的槽位并递增完成计数。
+     *
+     * <p>用 CAS 保证「每个槽位只计一次」：取消收尾可能已经先用 cancelled 占位，
+     * 此时探测线程的迟到结果不再覆盖（取消后未完成目标按 cancelled 处理），
+     * 完成计数也不会重复累加。
+     */
     public void completeSlot(int index, TargetResult result) {
-        results.set(index, result);
-        completed.incrementAndGet();
+        if (results.compareAndSet(index, null, result)) {
+            completed.incrementAndGet();
+        }
     }
 
     /** 把未完成的槽位补记为指定状态（CAS 语义：已被探测线程写入的槽位保留原结果）。 */

@@ -2,6 +2,7 @@ package com.example.tcpprobe.model;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import java.util.List;
@@ -12,5 +13,5 @@ public record CreateTaskRequest(
         String name,
 
         @NotEmpty(message = "targets 不能为空")
-        List<@Valid ProbeTarget> targets) {
+        List<@NotNull(message = "targets 元素不能为空") @Valid ProbeTarget> targets) {
 }

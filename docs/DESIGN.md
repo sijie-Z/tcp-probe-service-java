@@ -157,7 +157,7 @@ tokens(t) = min(capacity, tokens(t0) + (t - t0) * rps)
 
 ## 12. 与 Python 版对比
 
-同一道题的另一套实现（`sijie-Z/tcp-probe-service`）使用 Python 3.12 + FastAPI + asyncio。两版**外部契约完全一致**（端点、字段、错误码、状态语义、限流参数、`X-Request-ID` 行为），并且**共用同一份冒烟脚本** `scripts/smoke_test.py`，在两套实现上均 6/6 通过。
+同一道题的另一套实现（`sijie-Z/tcp-probe-service`）使用 Python 3.12 + FastAPI + asyncio。两版**核心契约一致**（端点、字段、错误码、状态语义、限流参数、`X-Request-ID` 行为；40 项契约对比逐项核对，差异项已完成对齐），并且**共用同一份冒烟脚本** `scripts/smoke_test.py`，在两套实现上均 6/6 通过。仍存在的边缘差异（实现自由度内，已在 README 记录）：尾斜杠 307 vs 404、405 的 `Allow` 头集合、`dns_error` 细节文本、Content-Type 的 charset、非 JSON Content-Type 时 422 vs 415。
 
 内部差异：
 

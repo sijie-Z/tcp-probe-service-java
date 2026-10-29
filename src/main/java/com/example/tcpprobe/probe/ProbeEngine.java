@@ -43,7 +43,7 @@ import java.util.concurrent.TimeoutException;
  *       {@code error} 形如 {@code connection_refused: ip:port}。</li>
  *   <li>{@code timeout}：预算内没有任何明确答复，且存在超时的连接尝试
  *       （{@link SocketTimeoutException}）；DNS 阶段超时也归入本状态，
- *       {@code error} 前缀为 {@code dns_timeout}。</li>
+ *       {@code error} 统一以 {@code timeout:} 开头（与 Python 版前缀对齐）。</li>
  *   <li>{@code dns_error}：{@link UnknownHostException} 或解析结果为空，立即返回。</li>
  *   <li>{@code unreachable}：{@link NoRouteToHostException}、连接重置等其他
  *       {@link IOException}。</li>
@@ -164,7 +164,7 @@ public final class ProbeEngine {
         long remainingNanos = deadlineNanos - System.nanoTime();
         if (remainingNanos <= 0) {
             return Resolution.terminal(failure(host, port, TargetStatus.TIMEOUT,
-                    "budget_exhausted: no time left for DNS resolution"));
+                    "timeout: budget exhausted before DNS resolution"));
         }
         Future<InetAddress[]> future = RESOLVER_EXECUTOR.submit(() -> resolver.resolve(host));
         try {
@@ -177,7 +177,8 @@ public final class ProbeEngine {
         } catch (TimeoutException e) {
             future.cancel(true);
             return Resolution.terminal(
-                    failure(host, port, TargetStatus.TIMEOUT, "dns_timeout: " + host));
+                    failure(host, port, TargetStatus.TIMEOUT,
+                            "timeout: dns resolution exceeded budget: " + host));
         } catch (InterruptedException e) {
             future.cancel(true);
             Thread.currentThread().interrupt();
@@ -261,14 +262,14 @@ public final class ProbeEngine {
         }
         if (timeoutIp != null) {
             return new TargetResult(host, port, TargetStatus.TIMEOUT, timeoutIp, null,
-                    "connect_timeout: " + timeoutIp + ":" + port);
+                    "timeout: " + timeoutIp + ":" + port);
         }
         if (unreachableIp != null) {
             return new TargetResult(host, port, TargetStatus.UNREACHABLE, unreachableIp, null,
                     unreachableError);
         }
         return new TargetResult(host, port, TargetStatus.TIMEOUT, lastTriedIp, null,
-                "budget_exhausted: no definitive answer within budget");
+                "timeout: no definitive answer within budget");
     }
 
     /**
