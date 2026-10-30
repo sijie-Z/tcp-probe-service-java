@@ -43,9 +43,12 @@ public class TaskController {
         TaskState task = service.submit(request);
         if (wait) {
             task.awaitCompletion(waitTimeoutMs);
+            int statusCode = task.getStatus().isTerminal() ? 200 : 202;
+            return ResponseEntity.status(statusCode).body(task.snapshot());
         }
-        int statusCode = task.getStatus().isTerminal() ? 200 : 202;
-        return ResponseEntity.status(statusCode).body(task.snapshot());
+        // 不等待时恒为 202：任务可能在响应发出前就已结束（虚拟线程并发执行），
+        // 但异步提交的语义是 Accepted，由调用方轮询结果
+        return ResponseEntity.status(202).body(task.snapshot());
     }
 
     @GetMapping("/tasks")
