@@ -148,6 +148,7 @@ tokens(t) = min(capacity, tokens(t0) + (t - t0) * rps)
 - **HTTP 集成测试**：`@SpringBootTest(webEnvironment=RANDOM_PORT)` + `TestRestTemplate`，覆盖状态码、错误信封、`X-Request-ID`、429、503、异步轮询与 500 信封。
 
 > 环境差异提示：`closed` 分支依赖系统对未监听端口回 RST。个别环境（防火墙 stealth 模式、代理软件）会**延迟**送达 RST（实测某安全软件延迟约 2 秒），因此集成测试中 closed 用例显式用 5000ms 预算（其余默认 3000ms）、冒烟脚本 5000ms（均大于延迟窗口），断言仍为严格的 `closed`；若环境彻底静默丢包，返回的 `timeout` 同样是诚实结果。
+- **CI**：GitHub Actions 每次 push/PR 自动执行 lint + 全部测试 + 启动服务跑端到端冒烟（`.github/workflows/ci.yml`）。
 
 ## 11. 安全考量
 

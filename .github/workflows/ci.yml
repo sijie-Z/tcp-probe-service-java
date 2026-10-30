@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Unit & integration tests
+        run: mvn -B test
+
+      - name: Package
+        run: mvn -B -q -DskipTests package
+
+      - name: End-to-end smoke (start service, run smoke, stop)
+        run: |
+          java -jar target/tcp-probe-service-1.0.0.jar --server.port=8000 > app.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8000/healthz >/dev/null && break
+            sleep 1
+          done
+          python3 scripts/smoke_test.py --base-url http://127.0.0.1:8000
+          STATUS=$?
+          kill $SERVER_PID || true
+          exit $STATUS
