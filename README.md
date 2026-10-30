@@ -30,6 +30,10 @@ docker compose up -d --build
 curl http://127.0.0.1:8000/healthz
 ```
 
+> Dockerfile 构建阶段默认使用阿里云 Maven 镜像（容器直连 Maven Central 在国内较慢）；
+> 海外/内网环境可覆盖：
+> `docker compose build --build-arg MAVEN_MIRROR_URL=https://repo.maven.apache.org/maven2`
+
 ### 方式二：本地 JDK 21（Maven Wrapper 已内置）
 
 ```bash
@@ -253,7 +257,7 @@ tcp-probe-service-java/
 - **DNS 解析超时**：JDK 的 `InetAddress` 同步解析无法强制中止，解析线程在预算超时后可能短暂滞留（已知限制，受虚拟线程成本约束），文档已说明取舍。
 - **未实现 Happy Eyeballs（RFC 8305）**：多地址顺序尝试、共享预算；后续可做双栈并发优化。
 - **可观测性**：可接入 Prometheus 指标与 OpenTelemetry 链路。
-- **Docker 构建**：Dockerfile 采用多阶段构建并已通过 `docker compose config` 静态校验；本机验证环境 Docker 守护进程不可用，镜像构建未实测（本地 jar 方式已实测）。
+- **Docker 构建**：已在本机（Windows 11 + Docker 29.1.3）实测通过——`docker compose up -d --build` 构建成功、容器 `Up (healthy)`、Docker 模式冒烟（`--target-host host.docker.internal`）6/6。
 
 ## 与 Python 实现的关系
 

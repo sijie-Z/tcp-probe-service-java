@@ -11,6 +11,13 @@ FROM maven:3.9-eclipse-temurin-21 AS build
 
 WORKDIR /build
 
+# Maven 镜像源：默认使用阿里云镜像（国内构建显著更快；容器内直连 Maven Central 实测较慢）。
+# 海外/内网环境可覆盖：docker build --build-arg MAVEN_MIRROR_URL=https://repo.maven.apache.org/maven2 .
+ARG MAVEN_MIRROR_URL=https://maven.aliyun.com/repository/public
+RUN mkdir -p /root/.m2 \
+    && printf '<settings><mirrors><mirror><id>cn-mirror</id><mirrorOf>*</mirrorOf><url>%s</url></mirror></mirrors></settings>' \
+        "$MAVEN_MIRROR_URL" > /root/.m2/settings.xml
+
 # 先只拷 pom.xml 预热依赖：pom 不变时可命中缓存层，改业务代码不会触发依赖重新下载
 COPY pom.xml ./
 RUN mvn -B -q dependency:go-offline
