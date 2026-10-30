@@ -101,3 +101,6 @@ open：`ServerSocket` 监听但**不 accept**——内核在 backlog 未满时�
 
 **Q30：两版的错误分类为什么完全一致？**
 语义是契约的一部分：`open/closed/timeout/dns_error/unreachable/invalid/error/cancelled` 的判定矩阵、优先级（open > closed > timeout > unreachable）和 `latency_ms` 口径（仅握手阶段）在两版中逐条对齐，冒烟脚本才能无缝复用。差异只在各自语言的错误类型映射（`ConnectException` ↔ `ConnectionRefusedError`，`ClosedByInterruptException` ↔ `CancelledError`）。
+
+**Q31：为什么加了请求体大小限制？413 和 422 的边界在哪？**
+413 是传输层语义：Content-Length 超过 `MAX_BODY_BYTES`（默认 1 MiB）时，`BodySizeLimitFilter` 在解析 JSON 之前直接拒绝，避免为超大 body 分配内存；422 是内容语义：body 大小合法但字段不合法（类型、取值、业务上限）。过滤器顺序是 RequestContext → BodySizeLimit → RateLimit，超限请求不消耗限流令牌。实现只依据 Content-Length 头，无 Content-Length 的分块请求由 Tomcat 连接层兜底。

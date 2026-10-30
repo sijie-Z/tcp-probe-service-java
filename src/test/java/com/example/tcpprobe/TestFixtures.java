@@ -28,6 +28,7 @@ public final class TestFixtures {
                 maxTimeoutMs,
                 100,
                 new ProbeProperties.Task(maxTargets, maxActive, ttlSeconds, maxRetained),
-                new ProbeProperties.RateLimit(rateLimitEnabled, rps, burst, 600.0));
+                new ProbeProperties.RateLimit(rateLimitEnabled, rps, burst, 600.0),
+                1_048_576L);
     }
 }

@@ -23,7 +23,8 @@ public record ProbeProperties(
         @Min(1) int maxTimeoutMs,
         @Min(1) int maxConcurrency,
         @Valid @NotNull(message = "probe.task 配置段缺失") Task task,
-        @Valid @NotNull(message = "probe.rate-limit 配置段缺失") RateLimit rateLimit) {
+        @Valid @NotNull(message = "probe.rate-limit 配置段缺失") RateLimit rateLimit,
+        @Min(1) long maxBodyBytes) {
 
     @AssertTrue(message = "probe.default-timeout-ms 不能大于 probe.max-timeout-ms")
     public boolean isTimeoutRangeValid() {

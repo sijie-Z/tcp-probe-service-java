@@ -44,6 +44,8 @@ probe:
     ttl-seconds: ${TASK_TTL_SECONDS:3600}
     # 内存中最多保留的任务条数
     max-retained: ${TASK_MAX_RETAINED:1000}
+  # 请求体大小上限（字节）：超过返回 413 统一错误信封
+  max-body-bytes: ${MAX_BODY_BYTES:1048576}
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:true}
     # 每客户端（来源 IP）每秒补充的令牌数

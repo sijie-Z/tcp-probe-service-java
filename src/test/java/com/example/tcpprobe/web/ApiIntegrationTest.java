@@ -330,4 +330,40 @@ class ApiIntegrationTest {
         assertThat(json(response).get("error").get("code").asText()).isEqualTo("NOT_FOUND");
         assertThat(response.getHeaders().get("X-Request-ID")).hasSize(1);
     }
+
+    @Test
+    void oversizedBodyReturns413Envelope() throws IOException {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        String huge = "{\"" + "x".repeat(1_100_000) + "\":1}";
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                url("/api/v1/tasks"), new HttpEntity<>(huge, headers), String.class);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(413);
+        JsonNode body = json(response);
+        assertThat(body.get("error").get("code").asText()).isEqualTo("PAYLOAD_TOO_LARGE");
+        assertThat(response.getHeaders().getFirst("X-Request-ID"))
+                .isEqualTo(body.get("error").get("request_id").asText());
+    }
+
+    @Test
+    void openapiContractCoversDocumentedEndpoints() throws IOException {
+        ResponseEntity<String> response =
+                restTemplate.getForEntity(url("/v3/api-docs"), String.class);
+        JsonNode schema = json(response);
+
+        JsonNode paths = schema.get("paths");
+        assertThat(paths.has("/api/v1/tasks")).isTrue();
+        assertThat(paths.has("/api/v1/tasks/{taskId}")).isTrue();
+        assertThat(paths.has("/healthz")).isTrue();
+
+        JsonNode schemas = schema.get("components").get("schemas");
+        assertThat(schemas.get("CreateTaskRequest").get("required").toString())
+                .contains("targets");
+        JsonNode taskProps = schemas.get("TaskResponse").get("properties");
+        for (String field : new String[] {"id", "status", "total", "completed", "results"}) {
+            assertThat(taskProps.has(field)).as("schema field %s", field).isTrue();
+        }
+        assertThat(taskProps.has("created_at") || taskProps.has("createdAt")).isTrue();
+    }
 }

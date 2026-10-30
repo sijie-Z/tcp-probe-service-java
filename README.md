@@ -203,6 +203,7 @@ done
 | `RATE_LIMIT_RPS` | `5` | 每客户端每秒令牌数 |
 | `RATE_LIMIT_BURST` | `10` | 每客户端桶容量（突发上限） |
 | `RATE_LIMIT_IDLE_TTL_SECONDS` | `600` | 空闲令牌桶回收时间 |
+| `MAX_BODY_BYTES` | `1048576` | 请求体大小上限（字节），超过返回 413 `PAYLOAD_TOO_LARGE` |
 
 非法配置（如 `RATE_LIMIT_RPS=abc`、`nan`、`PROBE_DEFAULT_TIMEOUT_MS > PROBE_MAX_TIMEOUT_MS`）在启动时立即报错退出。
 
@@ -213,6 +214,7 @@ done
 - **取消链**：`DELETE` 中断协调线程与在途探测线程，`ClosedByInterruptException` 统一转 `CancellationException`；未完成槽位由收尾统一补 `cancelled`，已出结果保留。
 - **内存治理**：任务 TTL 惰性清理 + 条数上限淘汰最旧终态任务 + 活动任务背压 + 信号量限制在途连接，四层限制保证资源有界。
 - **可观测性**：Spring Boot 内置 ECS 结构化日志（含 `requestId`）、`X-Request-ID` 响应头、`/healthz`、Swagger UI。
+- **请求体上限**：`MAX_BODY_BYTES`（默认 1 MiB）在过滤器层按 Content-Length 拦截，超过直接 413 统一信封，避免超大 JSON 占用内存。
 
 完整设计取舍与边界条件见 [docs/DESIGN.md](docs/DESIGN.md)；面试问答见 [docs/INTERVIEW_QA.md](docs/INTERVIEW_QA.md)。
 
@@ -222,12 +224,33 @@ done
 ./mvnw test     # Windows: mvnw.cmd test
 ```
 
-**64 项测试**，覆盖：探测状态分类（真实本地监听器：open/closed/dns_error/invalid/timeout/IPv6/多地址 closed→open，另有注入缝的确定性超时）、令牌桶数学与内存治理（可注入时钟、并发放行计数）、任务编排（顺序、取消幂等、背压、关停）、任务状态（取消占位与迟到结果的并发一致性、终态后拒绝 markRunning、幂等收敛）、主机名校验（IPv4 简写拒绝）、HTTP 层（状态码、错误信封、`X-Request-ID` 单头断言、参数类型错误与 null 元素 422、非 JSON Content-Type 415、429+`Retry-After` 实测数值、并发准入仅 1 个成功、503 背压、异步轮询、500 信封）。测试不依赖外网。
+**66 项测试**，覆盖：探测状态分类（真实本地监听器：open/closed/dns_error/invalid/timeout/IPv6/多地址 closed→open，另有注入缝的确定性超时）、令牌桶数学与内存治理（可注入时钟、并发放行计数）、任务编排（顺序、取消幂等、背压、关停）、任务状态（取消占位与迟到结果的并发一致性、终态后拒绝 markRunning、幂等收敛）、主机名校验（IPv4 简写拒绝）、HTTP 层（状态码、错误信封、`X-Request-ID` 单头断言、参数类型错误与 null 元素 422、非 JSON Content-Type 415、429+`Retry-After` 实测数值、并发准入仅 1 个成功、503 背压、异步轮询、500 信封、413 请求体上限、OpenAPI 契约字段）。测试不依赖外网；CI 上传 JaCoCo 覆盖率报告。
 
 > 环境说明：`closed` 依赖系统对未监听端口回 RST。若机器上防火墙 stealth 模式或代理软件
 > **延迟**送达 RST（实测某安全软件延迟约 2 秒），测试与冒烟脚本为 closed 目标预留了大于
 > 延迟窗口的预算（集成测试默认 3000ms、冒烟脚本 5000ms），断言仍为严格的 `closed`；
 > 若环境彻底静默丢包，返回 `timeout` 同样是诚实结果。
+
+## 性能自测（可选）
+
+```bash
+# 被测服务建议关闭限流，否则提交吞吐会被 429 限制
+RATE_LIMIT_ENABLED=false java -jar target/tcp-probe-service-1.0.0.jar --server.port=8000
+python scripts/load_test.py --base-url http://127.0.0.1:8000
+```
+
+示例输出（开发机、Windows 11 + Temurin 21，仅作参考，数字随环境变化）：
+
+```text
+== 批量探测 ==
+目标数 100，任务状态 succeeded，open 100/100
+端到端耗时 132 ms，平均 1.32 ms/目标
+
+== 提交吞吐 ==
+请求 100，并发 10，202 100，429 0，503 0，墙钟 0.09s
+提交延迟 p50 7.7 ms，p95 14.6 ms，平均 8.1 ms
+提交 QPS 1153 req/s
+```
 
 ## 目录结构
 
@@ -258,7 +281,7 @@ tcp-probe-service-java/
 - **无鉴权**：探测服务天然可被滥用（SSRF / 端口扫描），当前按作业范围未做鉴权与目标白名单；生产化应加 API Key、目标允许清单与审计。
 - **DNS 解析超时**：JDK 的 `InetAddress` 同步解析无法强制中止，解析线程在预算超时后可能短暂滞留（已知限制，受虚拟线程成本约束），文档已说明取舍。
 - **未实现 Happy Eyeballs（RFC 8305）**：多地址顺序尝试、共享预算；后续可做双栈并发优化。
-- **可观测性**：可接入 Prometheus 指标与 OpenTelemetry 链路。
+- **可观测性**：可接入 Prometheus 指标与 OpenTelemetry 链路；请求体大小限制已实现（`MAX_BODY_BYTES`）。
 - **Docker 构建**：已在本机（Windows 11 + Docker 29.1.3）实测通过——`docker compose up -d --build` 构建成功、容器 `Up (healthy)`、Docker 模式冒烟（`--target-host host.docker.internal`）6/6。
 
 ## 与 Python 实现的关系

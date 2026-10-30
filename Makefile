@@ -9,7 +9,7 @@ IMAGE      ?= tcp-probe-service-java:latest
 SMOKE_ARGS ?=
 PYTHON     ?= python
 
-.PHONY: build test run docker-build docker-up docker-down smoke
+.PHONY: build test run docker-build docker-up docker-down smoke load
 
 # 快速打包（跳过测试执行，产物 target/tcp-probe-service-1.0.0.jar）
 build:
@@ -40,3 +40,7 @@ docker-down:
 #   make smoke SMOKE_ARGS="--target-host host.docker.internal"
 smoke:
 	$(PYTHON) scripts/smoke_test.py $(SMOKE_ARGS)
+
+# 轻量压测（建议先以 RATE_LIMIT_ENABLED=false 启动服务）
+load:
+	$(PYTHON) scripts/load_test.py

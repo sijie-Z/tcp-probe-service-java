@@ -154,6 +154,7 @@ tokens(t) = min(capacity, tokens(t0) + (t - t0) * rps)
 
 - 服务本身是"内网工具型"定位：**无鉴权**，任何人可让它探测任意目标（SSRF/端口扫描面）。作业范围内接受；生产化必须加 API Key、目标白名单、出口网络策略与审计日志。
 - 限流只降低滥用速率，不解决授权问题。
+- 请求体大小上限 `MAX_BODY_BYTES`（默认 1 MiB，BodySizeLimitFilter 按 Content-Length 拦截，413 统一信封）：避免超大 JSON 占用内存；无 Content-Length 的分块请求由 Tomcat 连接层兜底。
 - 不信任 `X-Forwarded-For`；日志不记录请求体（当前请求体本就无凭据）。
 
 ## 12. 与 Python 版对比
@@ -178,4 +179,4 @@ tokens(t) = min(capacity, tokens(t0) + (t - t0) * rps)
 2. **鉴权与授权**：API Key → JWT；目标允许清单（CIDR 白名单）与每租户配额。
 3. **指标**：Micrometer + Prometheus（任务状态计数、探测耗时直方图、限流命中数）；OpenTelemetry 链路。
 4. **探测增强**：Happy Eyeballs（双栈并发首包）、可配置探测类型。
-5. **请求体大小限制**：Tomcat 层限制 body 大小，防超大 JSON 占内存。
+5. **请求体大小限制**：已实现（`MAX_BODY_BYTES`，413 统一信封）。
