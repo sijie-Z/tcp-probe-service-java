@@ -3,6 +3,7 @@ package com.example.tcpprobe.service;
 import com.example.tcpprobe.config.ProbeProperties;
 import com.example.tcpprobe.domain.TaskState;
 import com.example.tcpprobe.model.CreateTaskRequest;
+import com.example.tcpprobe.metrics.MetricsRegistry;
 import com.example.tcpprobe.model.ProbeTarget;
 import com.example.tcpprobe.model.TargetResult;
 import com.example.tcpprobe.model.TargetStatus;
@@ -52,11 +53,14 @@ public class TaskService {
     private final ExecutorService probeExecutor;
     private final ExecutorService coordinatorExecutor;
     private final Map<String, Future<?>> coordinators = new ConcurrentHashMap<>();
+    private final MetricsRegistry metrics;
 
-    public TaskService(ProbeProperties properties, TaskStore store, ProbeFn probeFn) {
+    public TaskService(ProbeProperties properties, TaskStore store, ProbeFn probeFn,
+                       MetricsRegistry metrics) {
         this.properties = properties;
         this.store = store;
         this.probeFn = probeFn;
+        this.metrics = metrics;
         this.permits = new Semaphore(properties.maxConcurrency());
         // Java 21 虚拟线程：探测是纯 IO 等待，虚拟线程的阻塞成本远低于平台线程
         this.probeExecutor = Executors.newThreadPerTaskExecutor(
@@ -68,11 +72,13 @@ public class TaskService {
     public TaskState submit(CreateTaskRequest request) {
         List<ProbeTarget> targets = request.targets();
         if (targets.size() > properties.task().maxTargets()) {
+            metrics.increment("tcp_probe_tasks_rejected_total", "reason", "invalid");
             throw new ProbeRequestException("TARGETS_TOO_MANY",
                     "单任务最多 " + properties.task().maxTargets() + " 个目标，收到 " + targets.size() + " 个");
         }
         for (ProbeTarget target : targets) {
             if (target.timeoutMs() != null && target.timeoutMs() > properties.maxTimeoutMs()) {
+                metrics.increment("tcp_probe_tasks_rejected_total", "reason", "invalid");
                 throw new ProbeRequestException("TIMEOUT_TOO_LARGE",
                         "timeout_ms 不能超过 " + properties.maxTimeoutMs()
                                 + "（host=" + target.host() + ":" + target.port() + "）");
@@ -82,6 +88,7 @@ public class TaskService {
                 request.name(), targets);
         // 原子准入：检查与注册在同一临界区，并发提交不会突破 max-active 背压
         if (!store.tryAddActive(task, properties.task().maxActive())) {
+            metrics.increment("tcp_probe_tasks_rejected_total", "reason", "capacity");
             throw new TaskCapacityException(properties.task().maxActive());
         }
         try {
@@ -95,6 +102,7 @@ public class TaskService {
             store.remove(task.getId());
             throw ex;
         }
+        metrics.increment("tcp_probe_tasks_submitted_total");
         return task;
     }
 
@@ -102,7 +110,7 @@ public class TaskService {
         if (!task.markRunning()) {
             // 已取消或已收敛终态（如提交后未及调度即被取消）：不再启动任何探测
             task.fillMissing(TargetStatus.CANCELLED, "任务已取消");
-            task.finish(TaskStatus.CANCELLED, null);
+            finishAndRecord(task, TaskStatus.CANCELLED, null);
             return;
         }
         try {
@@ -132,14 +140,14 @@ public class TaskService {
             boolean cancelled = task.isCancelRequested() || Thread.currentThread().isInterrupted();
             if (cancelled) {
                 task.fillMissing(TargetStatus.CANCELLED, "任务已取消");
-                task.finish(TaskStatus.CANCELLED, null);
+                finishAndRecord(task, TaskStatus.CANCELLED, null);
             } else {
-                task.finish(TaskStatus.SUCCEEDED, null);
+                finishAndRecord(task, TaskStatus.SUCCEEDED, null);
             }
         } catch (RuntimeException ex) {
             log.error("task_failed task_id={}", task.getId(), ex);
             task.fillMissing(TargetStatus.ERROR, "任务内部错误");
-            task.finish(TaskStatus.FAILED, ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            finishAndRecord(task, TaskStatus.FAILED, ex.getClass().getSimpleName() + ": " + ex.getMessage());
         } finally {
             coordinators.remove(task.getId());
         }
@@ -166,6 +174,19 @@ public class TaskService {
                     ex.getClass().getSimpleName() + ": " + ex.getMessage()));
         } finally {
             permits.release();
+        }
+    }
+
+    private void finishAndRecord(TaskState task, TaskStatus terminalStatus, String error) {
+        if (!task.finish(terminalStatus, error)) {
+            return;
+        }
+        metrics.increment("tcp_probe_tasks_finished_total", "status", terminalStatus.wireName());
+        for (int index = 0; index < task.getTotal(); index++) {
+            TargetResult result = task.resultAt(index);
+            if (result != null) {
+                metrics.increment("tcp_probe_targets_total", "status", result.status().wireName());
+            }
         }
     }
 
@@ -200,12 +221,12 @@ public class TaskService {
         if (task.getStatus() == TaskStatus.PENDING) {
             // 协调线程尚未获得调度（协程体从未执行），直接兜底收敛
             task.fillMissing(TargetStatus.CANCELLED, "任务已取消");
-            task.finish(TaskStatus.CANCELLED, null);
+            finishAndRecord(task, TaskStatus.CANCELLED, null);
         } else {
             task.awaitCompletion(2000);
             if (!task.isTerminal()) {
                 task.fillMissing(TargetStatus.CANCELLED, "任务已取消");
-                task.finish(TaskStatus.CANCELLED, null);
+                finishAndRecord(task, TaskStatus.CANCELLED, null);
             }
         }
         return task;
@@ -237,7 +258,7 @@ public class TaskService {
             long remaining = deadline - System.currentTimeMillis();
             if (remaining <= 0 || !task.awaitCompletion(remaining)) {
                 task.fillMissing(TargetStatus.CANCELLED, "服务关停");
-                task.finish(TaskStatus.CANCELLED, null);
+                finishAndRecord(task, TaskStatus.CANCELLED, null);
             }
         }
         probeExecutor.shutdownNow();

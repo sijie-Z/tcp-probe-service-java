@@ -168,10 +168,10 @@ public final class TaskState {
         }
     }
 
-    /** 收敛终态；重复调用幂等（先到者生效）。 */
-    public synchronized void finish(TaskStatus terminalStatus, String terminalError) {
+    /** 收敛终态；返回是否发生了状态迁移（重复调用返回 false，先到者生效）。 */
+    public synchronized boolean finish(TaskStatus terminalStatus, String terminalError) {
         if (status.isTerminal()) {
-            return;
+            return false;
         }
         if (terminalError != null) {
             error = terminalError;
@@ -179,6 +179,7 @@ public final class TaskState {
         finishedAt = Instant.now();
         status = terminalStatus;
         completion.complete(null);
+        return true;
     }
 
     /** 等待终态，最多 timeoutMs 毫秒；超时返回 false。 */
@@ -203,6 +204,11 @@ public final class TaskState {
         }
         return new TaskResponse(
                 id, name, status, total, completed.get(), list, createdAt, startedAt, finishedAt, error);
+    }
+
+    /** 读取指定槽位的结果（未完成时为 null，供指标统计）。 */
+    public TargetResult resultAt(int index) {
+        return results.get(index);
     }
 
     public TaskSummary summary() {

@@ -67,5 +67,10 @@ class RateLimitApiTest {
                     "http://127.0.0.1:" + port + "/healthz", String.class)
                     .getStatusCode().value()).isEqualTo(200);
         }
+
+        String metrics = restTemplate.getForEntity(
+                "http://127.0.0.1:" + port + "/metrics", String.class).getBody();
+        assertThat(metrics).contains("tcp_probe_rate_limited_total");
+        assertThat(metrics).contains("tcp_probe_tasks_submitted_total");
     }
 }

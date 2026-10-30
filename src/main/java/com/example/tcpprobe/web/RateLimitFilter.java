@@ -1,6 +1,7 @@
 package com.example.tcpprobe.web;
 
 import com.example.tcpprobe.config.ProbeProperties;
+import com.example.tcpprobe.metrics.MetricsRegistry;
 import com.example.tcpprobe.model.ErrorResponse;
 import com.example.tcpprobe.ratelimit.ClientRateLimiter;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,12 +33,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final ClientRateLimiter limiter;
     private final ProbeProperties properties;
     private final ObjectMapper objectMapper;
+    private final MetricsRegistry metrics;
 
-    public RateLimitFilter(
-            ClientRateLimiter limiter, ProbeProperties properties, ObjectMapper objectMapper) {
+    public RateLimitFilter(ClientRateLimiter limiter, ProbeProperties properties,
+                           ObjectMapper objectMapper, MetricsRegistry metrics) {
         this.limiter = limiter;
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.metrics = metrics;
     }
 
     @Override
@@ -52,6 +55,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         ClientRateLimiter.CheckResult decision = limiter.check(request.getRemoteAddr());
         if (!decision.allowed()) {
+            metrics.increment("tcp_probe_rate_limited_total");
             // 上限 3600 秒：防止极小 rps 配置把取整推到溢出
             long retrySeconds = Math.max(1L,
                     Math.min(3600L, (long) Math.ceil(decision.retryAfterSeconds())));

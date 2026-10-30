@@ -33,6 +33,9 @@ jobs:
       - name: Package
         run: mvn -B -q -DskipTests package
 
+      - name: Validate compose file
+        run: docker compose config -q
+
       - name: End-to-end smoke (start service, run smoke, stop)
         run: |
           java -jar target/tcp-probe-service-1.0.0.jar --server.port=8000 > app.log 2>&1 &

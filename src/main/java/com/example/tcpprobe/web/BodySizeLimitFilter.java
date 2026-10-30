@@ -1,6 +1,7 @@
 package com.example.tcpprobe.web;
 
 import com.example.tcpprobe.config.ProbeProperties;
+import com.example.tcpprobe.metrics.MetricsRegistry;
 import com.example.tcpprobe.model.ErrorResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
@@ -29,10 +30,13 @@ public class BodySizeLimitFilter extends OncePerRequestFilter {
 
     private final long maxBytes;
     private final ObjectMapper objectMapper;
+    private final MetricsRegistry metrics;
 
-    public BodySizeLimitFilter(ProbeProperties properties, ObjectMapper objectMapper) {
+    public BodySizeLimitFilter(ProbeProperties properties, ObjectMapper objectMapper,
+                               MetricsRegistry metrics) {
         this.maxBytes = properties.maxBodyBytes();
         this.objectMapper = objectMapper;
+        this.metrics = metrics;
     }
 
     @Override
@@ -41,6 +45,7 @@ public class BodySizeLimitFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         long length = request.getContentLengthLong();
         if (length > maxBytes) {
+            metrics.increment("tcp_probe_body_rejected_total");
             String requestId = String.valueOf(
                     request.getAttribute(RequestContextFilter.ATTR_REQUEST_ID));
             response.setStatus(HttpStatus.PAYLOAD_TOO_LARGE.value());

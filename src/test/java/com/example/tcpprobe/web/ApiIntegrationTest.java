@@ -366,4 +366,21 @@ class ApiIntegrationTest {
         }
         assertThat(taskProps.has("created_at") || taskProps.has("createdAt")).isTrue();
     }
+
+    @Test
+    void metricsEndpointReportsCounters() throws Exception {
+        try (ServerSocket listener = listen()) {
+            post("/api/v1/tasks?wait=true&wait_timeout_ms=8000",
+                    payload(target("127.0.0.1", listener.getLocalPort(), null)));
+        }
+
+        ResponseEntity<String> response = restTemplate.getForEntity(url("/metrics"), String.class);
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getHeaders().getContentType().toString()).startsWith("text/plain");
+
+        String text = response.getBody();
+        assertThat(text).contains("tcp_probe_tasks_submitted_total");
+        assertThat(text).contains("tcp_probe_tasks_finished_total{status=\"succeeded\"}");
+        assertThat(text).contains("tcp_probe_targets_total{status=\"open\"}");
+    }
 }

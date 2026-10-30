@@ -3,6 +3,7 @@ package com.example.tcpprobe.service;
 import com.example.tcpprobe.TestFixtures;
 import com.example.tcpprobe.config.ProbeProperties;
 import com.example.tcpprobe.domain.TaskState;
+import com.example.tcpprobe.metrics.MetricsRegistry;
 import com.example.tcpprobe.model.CreateTaskRequest;
 import com.example.tcpprobe.model.ProbeTarget;
 import com.example.tcpprobe.model.TargetResult;
@@ -23,7 +24,7 @@ class TaskServiceTest {
     private TaskService service;
 
     private TaskService serviceWith(ProbeFn fn, ProbeProperties props) {
-        service = new TaskService(props, new TaskStore(props), fn);
+        service = new TaskService(props, new TaskStore(props), fn, new MetricsRegistry());
         return service;
     }
 

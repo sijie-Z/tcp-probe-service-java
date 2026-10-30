@@ -21,7 +21,19 @@ HTTP 接口接收**批量 TCP 连通性探测任务**，后台使用 **Java 21 �
 | 简单的限流 | 按来源 IP 的令牌桶：默认 5 rps / 突发 10，超限返回 429 + `Retry-After` |
 | 不要使用第三方封装好的探测组件 | 探测引擎完全自研：非阻塞 `SocketChannel` + `Selector` 手写带超时握手，见 [probe/ProbeEngine.java](src/main/java/com/example/tcpprobe/probe/ProbeEngine.java) |
 | 交付 Git 仓库 + README，拉下来能启动和验证 | 本仓库：`docker compose up` 或本地 Maven 两种方式；`scripts/smoke_test.py` 一键端到端验证 |
-| 3 天内完成，优先核心功能稳定、代码整洁 | 66 项测试（含 20 项 HTTP 集成测试）、`mvn test` 全绿 |
+| 3 天内完成，优先核心功能稳定、代码整洁 | 67 项测试（含 21 项 HTTP 集成测试）、`mvn test` 全绿 |
+
+## 架构一览
+
+```mermaid
+flowchart LR
+    C[HTTP 客户端] --> MW[过滤器链: 请求上下文 / 体积限制 / 限流]
+    MW --> API[Spring MVC 控制器]
+    API --> SVC[任务编排 虚拟线程]
+    SVC --> PROBE[TCP 探测引擎 SocketChannel]
+    SVC --> STORE[(任务存储 TTL)]
+    PROBE --> RES[结果按提交顺序回填]
+```
 
 ## 快速开始
 
@@ -133,6 +145,7 @@ done
 | GET | `/api/v1/tasks/{task_id}` | 任务详情与结果；结果与提交顺序一一对应，未完成的槽位为 `null` |
 | DELETE | `/api/v1/tasks/{task_id}` | 取消未结束的任务（未完成目标以 `cancelled` 补齐，已出结果保留）；**取消幂等**（已取消再取消返回 200），已成功/失败结束返回 409 |
 | GET | `/healthz` | 存活探针，不参与限流 |
+| GET | `/metrics` | Prometheus 文本指标（手写零依赖，不参与限流） |
 
 **请求体**（`POST /api/v1/tasks`）：
 
@@ -214,6 +227,7 @@ done
 - **取消链**：`DELETE` 中断协调线程与在途探测线程，`ClosedByInterruptException` 统一转 `CancellationException`；未完成槽位由收尾统一补 `cancelled`，已出结果保留。
 - **内存治理**：任务 TTL 惰性清理 + 条数上限淘汰最旧终态任务 + 活动任务背压 + 信号量限制在途连接，四层限制保证资源有界。
 - **可观测性**：Spring Boot 内置 ECS 结构化日志（含 `requestId`）、`X-Request-ID` 响应头、`/healthz`、Swagger UI。
+- **指标**：`GET /metrics` 输出 Prometheus 文本格式计数器（任务提交/拒绝、任务终态、目标结果分布、限流/体积拦截），重启归零。
 - **请求体上限**：`MAX_BODY_BYTES`（默认 1 MiB）在过滤器层按 Content-Length 拦截，超过直接 413 统一信封，避免超大 JSON 占用内存。
 
 完整设计取舍与边界条件见 [docs/DESIGN.md](docs/DESIGN.md)；面试问答见 [docs/INTERVIEW_QA.md](docs/INTERVIEW_QA.md)。
@@ -224,7 +238,7 @@ done
 ./mvnw test     # Windows: mvnw.cmd test
 ```
 
-**66 项测试**，覆盖：探测状态分类（真实本地监听器：open/closed/dns_error/invalid/timeout/IPv6/多地址 closed→open，另有注入缝的确定性超时）、令牌桶数学与内存治理（可注入时钟、并发放行计数）、任务编排（顺序、取消幂等、背压、关停）、任务状态（取消占位与迟到结果的并发一致性、终态后拒绝 markRunning、幂等收敛）、主机名校验（IPv4 简写拒绝）、HTTP 层（状态码、错误信封、`X-Request-ID` 单头断言、参数类型错误与 null 元素 422、非 JSON Content-Type 415、429+`Retry-After` 实测数值、并发准入仅 1 个成功、503 背压、异步轮询、500 信封、413 请求体上限、OpenAPI 契约字段）。测试不依赖外网；CI 上传 JaCoCo 覆盖率报告。
+**67 项测试**，覆盖：探测状态分类（真实本地监听器：open/closed/dns_error/invalid/timeout/IPv6/多地址 closed→open，另有注入缝的确定性超时）、令牌桶数学与内存治理（可注入时钟、并发放行计数）、任务编排（顺序、取消幂等、背压、关停）、任务状态（取消占位与迟到结果的并发一致性、终态后拒绝 markRunning、幂等收敛）、主机名校验（IPv4 简写拒绝）、HTTP 层（状态码、错误信封、`X-Request-ID` 单头断言、参数类型错误与 null 元素 422、非 JSON Content-Type 415、429+`Retry-After` 实测数值、并发准入仅 1 个成功、503 背压、异步轮询、500 信封、413 请求体上限、OpenAPI 契约字段、/metrics 计数器）。测试不依赖外网；CI 上传 JaCoCo 覆盖率报告。
 
 > 环境说明：`closed` 依赖系统对未监听端口回 RST。若机器上防火墙 stealth 模式或代理软件
 > **延迟**送达 RST（实测某安全软件延迟约 2 秒），测试与冒烟脚本为 closed 目标预留了大于
@@ -267,7 +281,7 @@ tcp-probe-service-java/
 │   ├── store/         # TaskStore：TTL + 容量治理
 │   ├── support/       # HostRules、@ValidHost、@StrictInt
 │   └── web/           # 控制器、过滤器（request id / 限流）、全局异常处理
-├── src/test/java/     # 66 项 JUnit 5 测试
+├── src/test/java/     # 67 项 JUnit 5 测试
 ├── scripts/smoke_test.py   # 端到端冒烟脚本（与 Python 版共用）
 ├── docs/              # DESIGN.md / INTERVIEW_QA.md
 ├── Dockerfile / docker-compose.yml / .dockerignore
