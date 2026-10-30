@@ -21,7 +21,7 @@ HTTP 接口接收**批量 TCP 连通性探测任务**，后台使用 **Java 21 �
 | 简单的限流 | 按来源 IP 的令牌桶：默认 5 rps / 突发 10，超限返回 429 + `Retry-After` |
 | 不要使用第三方封装好的探测组件 | 探测引擎完全自研：非阻塞 `SocketChannel` + `Selector` 手写带超时握手，见 [probe/ProbeEngine.java](src/main/java/com/example/tcpprobe/probe/ProbeEngine.java) |
 | 交付 Git 仓库 + README，拉下来能启动和验证 | 本仓库：`docker compose up` 或本地 Maven 两种方式；`scripts/smoke_test.py` 一键端到端验证 |
-| 3 天内完成，优先核心功能稳定、代码整洁 | 64 项测试（含 18 项 HTTP 集成测试）、`mvn test` 全绿 |
+| 3 天内完成，优先核心功能稳定、代码整洁 | 66 项测试（含 20 项 HTTP 集成测试）、`mvn test` 全绿 |
 
 ## 快速开始
 
@@ -267,7 +267,7 @@ tcp-probe-service-java/
 │   ├── store/         # TaskStore：TTL + 容量治理
 │   ├── support/       # HostRules、@ValidHost、@StrictInt
 │   └── web/           # 控制器、过滤器（request id / 限流）、全局异常处理
-├── src/test/java/     # 64 项 JUnit 5 测试
+├── src/test/java/     # 66 项 JUnit 5 测试
 ├── scripts/smoke_test.py   # 端到端冒烟脚本（与 Python 版共用）
 ├── docs/              # DESIGN.md / INTERVIEW_QA.md
 ├── Dockerfile / docker-compose.yml / .dockerignore
